@@ -1,0 +1,414 @@
+---
+title: "Pstat 174 Final Project"
+author: "Kenneth Villatoro"
+date: "2023-12-8"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Abstract ## 
+
+Throughout this final project, I analyzed the United Kingdom Monthly Driver Deaths from 1969 to 1984. The questions I addressed in this final project was how many deaths will occur in the United Kingdom due to car accidents in the next 10 months. This is very important as the goal is to predict these outcomes and from there indicate what measurements are needed in order to continue lowering that number. Car accidents are imperative, it happens throughout and is something that cannot be changed as it is a part of daily life. However, the amount of deaths can be reduced significantly through strict measurements and a change of transportation habits. The transformations I used in order to forecast these outcomes are box cox transformations and differencing from lags 1 and 12. The conclusions that come with the forecasting is that it was dramatically decrease, however, the deaths will pick up again over time. 
+
+
+```{r, echo = FALSE, message = FALSE}
+library(astsa)
+library(tsdl)
+library(forecast)
+library(MASS)
+library(qpcR)
+
+
+#plot roots function 
+
+plot.roots <- function(ar.roots=NULL, ma.roots=NULL, size=2, angles=FALSE, special=NULL, sqecial=NULL,my.pch=1,first.col="blue",second.col="red",main=NULL)
+{xylims <- c(-size,size)
+      omegas <- seq(0,2*pi,pi/500)
+      temp <- exp(complex(real=rep(0,length(omegas)),imag=omegas))
+      plot(Re(temp),Im(temp),typ="l",xlab="x",ylab="y",xlim=xylims,ylim=xylims,main=main)
+      abline(v=0,lty="dotted")
+      abline(h=0,lty="dotted")
+      if(!is.null(ar.roots))
+        {
+          points(Re(1/ar.roots),Im(1/ar.roots),col=first.col,pch=my.pch)
+          points(Re(ar.roots),Im(ar.roots),col=second.col,pch=my.pch)
+        }
+      if(!is.null(ma.roots))
+        {
+          points(Re(1/ma.roots),Im(1/ma.roots),pch="*",cex=1.5,col=first.col)
+          points(Re(ma.roots),Im(ma.roots),pch="*",cex=1.5,col=second.col)
+        }
+      if(angles)
+        {
+          if(!is.null(ar.roots))
+            {
+              abline(a=0,b=Im(ar.roots[1])/Re(ar.roots[1]),lty="dotted")
+              abline(a=0,b=Im(ar.roots[2])/Re(ar.roots[2]),lty="dotted")
+            }
+          if(!is.null(ma.roots))
+            {
+              sapply(1:length(ma.roots), function(j) abline(a=0,b=Im(ma.roots[j])/Re(ma.roots[j]),lty="dotted"))
+            }
+        }
+      if(!is.null(special))
+        {
+          lines(Re(special),Im(special),lwd=2)
+        }
+      if(!is.null(sqecial))
+        {
+          lines(Re(sqecial),Im(sqecial),lwd=2)
+        }
+        }
+
+```
+
+## Introduction ##
+
+The Data set that I will be analyzing in this final project is the UK Monthly Drivers Death data set from 1969-1984. This is an important Data set as it highlights the risks that involve driving and overall,g oing out to do daily tasks. It is important to state with Monthly Driver Death is very important not just in today's society, but in general for the safety of all citizens. There are many benefits in forecasting Drivers Deaths, as seeing what the expected amount is for each month will help prioritize sending a message to all citizens to not drive recklessly and most of all, not under the influence. 
+
+## Explatory Data Analysis ##
+
+We start by loading the Data Set in the R Mark Down:
+
+```{r}
+data("UKDriverDeaths")
+uk_data <- UKDriverDeaths
+head(uk_data)
+```
+
+## Training/Testing Split ##
+
+We then divide data to training and test sets. We will use training set for modeling and tests set for validation. For the splits, the years from 1969-1984 will be for the training set and 1984 will be for the testing set.
+
+```{r}
+training_uk = uk_data[c(1:167)]
+testing_uk= uk_data[c(168:180)]
+
+```
+
+
+# Data Vizualation of Time Series ##
+
+We plot the Time Series of the Training Set down below. We see that the Linear Trend is decreasing as the Years go on which is great, while the mean is constant at approximately 1700. 
+
+```{r}
+plot.ts(as.numeric(training_uk),main = "Time Series of Training Data", ylab = "Driver Deaths")
+ntr=length(as.numeric(training_uk))
+fit_train <- lm(as.numeric(training_uk) ~ as.numeric(1:ntr))
+abline(fit_train, col="red")
+abline(h=mean(as.numeric(training_uk)), col="blue")
+```
+
+
+Analyzing the ACF and PACF of the Training Data set, we see that the ACF and PACF are well outside the confidence interval at around lags 10-15, lag 2 and lag 3. With these results, it is imperative to either difference at either lag 1 or both at lag 1 and lag 12. 
+
+```{r}
+par(mfrow = c(1,2))
+acf(training_uk, lag.max = 20)
+pacf(training_uk, lag.max = 20)
+```
+
+
+
+## Transformations of Time Series ##
+
+
+The transformation that will be used in order to make the time series a stationary series is a Box cox transformation. The optimal $$ \lambda$$ received in this transformation is -1.717.
+
+```{r}
+#difference at lag 1 and 4 
+t <- 1:length(training_uk)
+
+boxcox_uk <- boxcox(training_uk ~ t, plotit = T)
+
+lambda <- boxcox_uk$x[which.max(boxcox_uk$y)]
+
+uk_bc <- (1/lambda) * (training_uk**(lambda-1))
+
+lambda
+
+```
+
+
+Then we compare a histogram of the training data alongside with the box cox transformed data. We analyze that there are more bins in the transformed variable as the box cox method is trying to make the data more Gaussian. 
+
+```{r}
+par(mfrow=c(1,2))
+hist(training_uk, col="light blue", xlab="", main="Histogram of UK Training Data") 
+hist(uk_bc, col="light blue", xlab="", main="Histogram of UK Transformed Data",
+     breaks=10)
+```
+
+
+Continuing with the box cox transformation, raw_uk_bc is a numeric form of the box cox time series with the purpose of plotting and seeing how well the transformed time series performed. We analyze that the mean is constant around zero which is a good sign and the linear trend decreasing as time goes on. 
+
+```{r}
+raw_uk_bc <- as.numeric(uk_bc)
+plot.ts(raw_uk_bc, main="Transformed Monthly UK Driver Deaths from 1969-1984") # to generate trend and mean:
+nt=length(raw_uk_bc)
+fit <- lm(raw_uk_bc ~ as.numeric(1:nt))
+abline(fit, col="red")
+abline(h=mean(raw_uk_bc), col="blue")
+
+```
+
+
+# Decomposition of the Boxcox Transformation #
+
+We then decompose the box cox transformation with the frequency equaling to 12 due to the time series being monthly. Observing the decomposition of the box cox transformation, we still see there is some linear trend with the addition of having a seasonality component as well. In order to continue with this transformation, there must be differencing at lags 1 and 12. 
+
+```{r}
+y <- ts(as.ts(raw_uk_bc), frequency = 12)
+
+decom <- decompose(y)
+
+plot(decom, col = "plum")
+```
+
+# Differencing Boxcox Transformation at Lags 1 and 12 with Checking # 
+
+We first start with the differencing of the box cox transformation at lag 1. The result of the Linear Model plot shown below is white noise, however, we analyze significant ups and down of the data. This is not a good sign as the transformed time series may be not be stationary. On the positive end, we do see the mean and fitted line almost the same which does show that the linear trend was eliminated. 
+
+```{r}
+y_1 <- diff(uk_bc, 1)
+plot.ts(y_1, main= "Boxcox UK Data Set differenced at lag 1",ylab="GDP differenced a
+t lag 1")
+fit_11 <- lm(y_1 ~ as.numeric(1:length(y_1)))
+abline(fit_11, col="red")
+abline(h=mean(y_1), col="blue")
+
+```
+
+Proceeding onto differencing to lag 12, this differencing is remvoing the seasonal component of the box cox transformed time series. Analyzing the graph shown below, 
+
+```{r}
+#Plot of y_12
+
+y_12 <- diff(y_1,12)
+
+plot.ts(y_12, main= "Boxcox UK Data Set differenced at lag 12", ylab="GDP differenced a
+t lag 12")
+fit_12 <- lm(y_12 ~ as.numeric(1:length(y_12)))
+abline(fit_12, col="red")
+abline(h=mean(y_12), col="blue")
+
+```
+## Variance Checking ##
+
+We then proceed onto analyzing the variance between The Original Data, The box cox transformation differenced at lag 1, and the box cox transformation differenced at lags 1 and 12. We see that we significantly lowered the variance when transforming and differencing the time series. Y_1 has the lowest variance, which is the model we will proceed with. 
+
+```{r}
+Variance_Comparison <- c(var(uk_data), var(y_1), var(y_12))
+
+analyze_1 <- as.data.frame(Variance_Comparison, row.names = c("Original", "Y_1", "Y_12"))
+
+analyze_1
+
+```
+
+
+# Analyzing ACF and PACF of Differencing Transformation #
+
+The ACF plot shows that at lag 12, the ACF are outside the confidence interval. On the other hand, for the PACF we see that the PACF at lag 12 and 13 is outside the confidence interval. Our values for p, d, q and P, D, and Q will be:
+
+q = 1
+d = 1
+p = 4
+
+P = 1 or 2
+D = 0
+Q = 1 or 2 
+
+```{r}
+par(mfrow = c(1,2))
+acf(y_1, lag.max = 20, main = "Training GDP Dataset after Lag 12 Differencing")
+pacf(y_1, lag.max = 20, main = "Training GDP Dataset after Lag 12 Differencing")
+```
+
+# Fitting Models according to Time Series Data #
+
+# Estimating AR parameters of Boxcox transformation #
+
+We first start off estimating the AR parameters in order to identify p. We see that the simulation concludes that an AR(13) model is best suited for this data. 
+
+```{r}
+ar(y_1, aic = TRUE, order.max = NULL, method = c("yule-walker"))
+
+```
+
+
+# Fitting Models/Model Identifitication #
+
+Three models will be fitted and then put to the test based on AICc in order to determine which is the best model to move forward with. For the first model, we will fit an AR(14) model. For the second model, we will fit an SARIMA(1,1,4) * (1,0,0) ^12 model. And finally, for the third model, we will fit a SARIMA(4,1,12) * (3,0,0)^12
+
+
+Model 1: AR(13)
+
+```{r}
+
+model_1 <- arima(uk_bc, order=c(13,1,0), seasonal = list(order = c(0,1,0), period = 12), method="ML")
+
+model_1
+```
+
+
+Model 2: SARIMA(1,1,4) * (2,0,0) ^12
+
+```{r}
+model_2 <- arima(uk_bc, order=c(1,1,4), seasonal = list(order = c(2,0,0), period = 12), method="ML")
+
+model_2
+```
+
+
+
+Model 3: SARIMA(4,1,12) * (3,0,0)^12
+
+```{r}
+model_3 <- arima(uk_bc, order=c(4,1,12), seasonal = list(order = c(3,0,0), period = 12), method="ML")
+model_3
+```
+
+
+## Comparing AICc of all three models
+
+Comparing the three models that we fitted, we conclude that model_2 has the lowest AICc and therefore contiune with this model. 
+
+```{r}
+
+AICc(model_1)
+AICc(model_2)
+AICc(model_3)
+
+```
+
+
+## Checking Model Stationary/Invertibility ##
+
+We then check for stationary and invertibility for Model 2:
+
+
+
+Model 2:
+
+```{r}
+#AR
+plot.roots(polyroot(c(1, 0.7662)))
+```
+
+```{r}
+#MA
+plot.roots(polyroot(c(1, 0.0778 , -0.3932 , -0.0175 , -0.3928)))
+```
+```{r}
+#SAR
+plot.roots(polyroot(c(1, -0.4495 , -0.2889)))
+```
+We see that based on the polyroots, Model 2 is stationary and invertible. 
+
+## Final Model and Formula ##
+
+The final model that will be used in order to forecast with be Model 3 as it has the lowest AICc and is stationary and invertible.
+
+The formula of this model is:
+
+$$ (1-0.4495B^{12} - 0.2889B^{24})(1+ 0.7662B)Y_{t} = (1 + 0.0778B -0.3932B^{2} - 0.017B^{3}  -0.3928B^{4})Z_{t}$$
+
+
+where: $$ Y_{t} = U_t^{1/(-1.71)} $$ 
+
+$$ U_t $$ is the original time series. 
+
+
+##  Diagonsitic Checking ##
+
+We then proceed to Diagnostic Checking in order to see if the residuals align with white noise and pass all Portmanteau Statistics. We first check if Model 2 is white noise by taking the residuals and analyzing the ACF and PACF plots. We see that all lags are inside the confidence interval. We can also conclude the residuals are white noise as the AR estimates of the residuals is 0. 
+
+```{r}
+residuals_2 = residuals(model_2)
+par(mfrow = c(1,2))
+acf(residuals_2, lag.max = 20, main = "ACF of Residuals of Model 2")
+pacf(residuals_2, lag.max = 20, main = "PACF of Residuals of Model 2")
+
+ar(residuals_2, aic = TRUE, order.max = NULL, message = c("yule-walker"))
+```
+
+
+```{r}
+#Model 2
+
+res_2 = residuals(model_2)
+par(mfrow=c(2,2))
+hist(res_2,density=20,breaks=20, col="blue", xlab="", prob=TRUE,
+     main="Histogram of residuals of Model 2")
+
+m <- mean(res_2)
+std <- sqrt(var(res_2))
+curve( dnorm(x,m,std), add=TRUE )
+plot.ts(res_2,ylab= "residuals of model",
+        main="Residuals plot of Training UK Data")
+fitt <- lm(res_2 ~ as.numeric(1:length(res_2)))
+abline(fitt, col="red")
+abline(h=mean(res_2), col="blue")
+qqnorm(res_2,main= "Normal Q-Q Plot for Model 2")
+qqline(res_2,col="blue")
+
+```
+
+
+## Portmanteau Statistics ##
+
+We then proceed to check the Portmanteau Statistics in order to ensure that the model is ready for forecasting. We see that Model 2 passes normality, Box-Pierce, Ljung-Box, and Mcleod-Li test. Thus, Model 2 is ready for forecasting.
+
+```{r}
+#Model 2 Checking 
+
+#Shapiro test for normality
+shapiro.test(res_2)
+
+#Box-Pierce test
+Box.test(res_2, type = c("Box-Pierce"), lag = 13, fitdf = 7)
+
+#Ljung-Box test
+Box.test(res_2, type = c("Ljung-Box"), lag = 13, fitdf = 7)
+
+#McLeod-Li test
+Box.test(res_2**2, type = c("Ljung-Box"), lag = 13, fitdf = 0)
+```
+
+
+## Forecasting of the Time Series Data ## 
+
+We then proceed to forecasting of Model 2, predicting the outcome for the next 10 months. We see that all the outcomes are inside the confidence interval, which is a good sign of our predicting in terms of the model. 
+
+```{r}
+#plot of forecasting using box-cox transformation
+library(forecast)
+
+pred.tr <- predict(model_2, n.ahead = 10)
+
+U.tr= pred.tr$pred + 2*pred.tr$se
+L.tr= pred.tr$pred - 2*pred.tr$se
+ts.plot(uk_bc, xlim=c(1,length(uk_bc)+10), ylim = c(min(uk_bc),max(U.tr))) #plot y.tr and forecast
+lines(U.tr, col="blue", lty="dashed")
+lines(L.tr, col="blue", lty="dashed")
+points((length(uk_bc)+1):(length(uk_bc)+10), pred.tr$pred, col="red")
+
+```
+
+
+## Conclusion ##  
+
+In conclusion, the forecasting of the predicted values did match the SARIMA model we fitted previously. However, we see that there is an increase in terms of the Deaths in the UK moving forward. This is not good for our outcome as we would like for our monthly Deaths to decrease as time goes on. This calls for action in terms of transportation regulations, a spread of message calling all drivers to drive safely, and bring up this outcome to a national level. This observation will heavily benefit those who value the safety of all citizens and those who care about their community.
+
+Collaborators to Project: Kenneth Villatoro, Professor Raisa Feldman
+
+Data Libraries used in Final Project: plot.roots.r()
+
+
